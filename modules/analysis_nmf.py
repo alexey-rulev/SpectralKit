@@ -44,10 +44,15 @@ def run_nmf(
     if init == "custom":
         if H_init is None:
             raise ValueError("H_init must be provided when init='custom'.")
+
+        # Work on a float copy so the caller's array isn't modified in-place
+        H_init = np.array(H_init, dtype=float, copy=True)
+
         if H_init.shape[1] != X.shape[1]:
             raise ValueError(
                 f"H_init shape {H_init.shape} incompatible with n_features={X.shape[1]}"
             )
+
         if H_init.shape[0] != n_components:
             rng = np.random.default_rng(random_state)
             if H_init.shape[0] > n_components:
@@ -55,6 +60,7 @@ def run_nmf(
             else:
                 extra = rng.random((n_components - H_init.shape[0], X.shape[1]))
                 H_init = np.vstack([H_init, extra])
+
         W_init = _nnls_W_given_H(X, H_init)
         model = NMF(
             n_components=n_components,
