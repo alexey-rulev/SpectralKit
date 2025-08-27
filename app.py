@@ -119,8 +119,9 @@ if method == "NMF":
     alpha_H = st.sidebar.number_input("alpha_H", 0.0, 10.0, 0.0, step=0.1)
     random_state = st.sidebar.number_input("random_state", 0, 10, 0, step=1)
 
-    # NMF H init (with optional preprocessing)
+    # NMF custom initialization
     H_init = None
+    W_init = None
     if "custom" in init_choice:
         st.sidebar.markdown("**Upload initial basis components (H)**")
         H_files = st.sidebar.file_uploader("H components (each file is one component)", type=["txt","csv","dat"], accept_multiple_files=True, key="nmf_h")
@@ -159,11 +160,31 @@ if method == "NMF":
                 B = clip_nonneg(B)
             H_init = B  # (<=k, n_features)
 
+        st.sidebar.markdown("**Upload initial coefficients (W)** (CSV)")
+        W_file = st.sidebar.file_uploader("W coefficients", type=["csv"], accept_multiple_files=False, key="nmf_w")
+        if W_file is not None:
+            try:
+                W_df = pd.read_csv(W_file)
+                W_arr = W_df.to_numpy()
+                if W_arr.shape[0] != X_proc.shape[0]:
+                    st.sidebar.warning(
+                        f"W file has {W_arr.shape[0]} rows but data has {X_proc.shape[0]} samples. Ignoring W init."
+                    )
+                else:
+                    if W_arr.shape[1] != k:
+                        st.sidebar.warning(
+                            f"W file has {W_arr.shape[1]} components, expected {k}. "
+                            "Missing columns will be filled with 0.5 or extra columns truncated."
+                        )
+                    W_init = W_arr
+            except Exception as e:
+                st.sidebar.warning(f"Failed to parse W file: {e}")
+
     try:
         res = run_nmf(
             X=X_proc, n_components=int(k),
             init="custom" if "custom" in init_choice and H_init is not None else init_choice,
-            H_init=H_init, max_iter=int(max_iter), l1_ratio=float(l1_ratio),
+            H_init=H_init, W_init=W_init, max_iter=int(max_iter), l1_ratio=float(l1_ratio),
             alpha_W=float(alpha_W), alpha_H=float(alpha_H), random_state=int(random_state),
         )
     except Exception as e:

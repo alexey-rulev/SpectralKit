@@ -27,6 +27,7 @@ def run_nmf(
     n_components: int,
     init: str = "nndsvd",
     H_init: Optional[np.ndarray] = None,
+    W_init: Optional[np.ndarray] = None,
     max_iter: int = 2000,
     l1_ratio: float = 0.0,
     alpha_W: float = 0.0,
@@ -36,7 +37,9 @@ def run_nmf(
     """Perform NMF on ``X``.
 
     If ``init`` is ``"custom"`` and ``H_init`` provides fewer than ``n_components`` rows,
-    the remaining components are initialized randomly.
+    the remaining components are initialized randomly. When ``W_init`` is provided and
+    has fewer than ``n_components`` columns, the missing coefficients are filled with
+    ``0.5``. Extra columns in either initializer are truncated.
     """
     X = np.asarray(X, dtype=float)
     if (X < 0).any():
@@ -55,7 +58,19 @@ def run_nmf(
             else:
                 extra = rng.random((n_components - H_init.shape[0], X.shape[1]))
                 H_init = np.vstack([H_init, extra])
-        W_init = _nnls_W_given_H(X, H_init)
+        if W_init is not None:
+            if W_init.shape[0] != X.shape[0]:
+                raise ValueError(
+                    f"W_init has {W_init.shape[0]} rows but X has {X.shape[0]} samples"
+                )
+            if W_init.shape[1] != n_components:
+                if W_init.shape[1] > n_components:
+                    W_init = W_init[:, :n_components]
+                else:
+                    extra = np.full((X.shape[0], n_components - W_init.shape[1]), 0.5)
+                    W_init = np.hstack([W_init, extra])
+        else:
+            W_init = _nnls_W_given_H(X, H_init)
         model = NMF(
             n_components=n_components,
             init="custom",
