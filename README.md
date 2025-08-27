@@ -1,5 +1,7 @@
 # Spectral Components Analyzer (Streamlit)
 
+A program to decompose a series of spectra into basis components using PCA, NNLS, LSQ fitting
+
 - Select **data format**: auto, 1-column (y), 2-column (x y), or custom.
 - Select **interpolation grid**: use first file’s x, or span all files (min..max with first-file spacing).
 - **Smoothing**: none, Savitzky–Golay, moving average, Gaussian. Pipeline is **smooth → clip negatives → normalize**.
@@ -28,3 +30,6 @@ With Compose:
 ```bash
 docker compose up --build
 ```
+
+## Example
+Use .dat files from example folder to try various options.
