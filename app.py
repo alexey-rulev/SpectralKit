@@ -199,7 +199,7 @@ if method == "NMF":
 
     # Optional: normalize components by area
     if norm_h_area:
-        areas = np.trapz(res.H, x, axis=1)
+        areas = np.trapezoid(res.H, x, axis=1)
         areas[areas == 0] = 1.0
         Hn = res.H / areas[:, None]
         Wn = res.W * areas[None, :]
