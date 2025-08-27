@@ -22,25 +22,61 @@ def _nnls_W_given_H(X: np.ndarray, H: np.ndarray) -> np.ndarray:
         W[i] = w_i
     return W
 
-def run_nmf(X: np.ndarray, n_components: int, init: str = "nndsvd", H_init: Optional[np.ndarray] = None,
-            max_iter: int = 2000, l1_ratio: float = 0.0, alpha_W: float = 0.0, alpha_H: float = 0.0,
-            random_state: Optional[int] = 0) -> NMFResult:
+def run_nmf(
+    X: np.ndarray,
+    n_components: int,
+    init: str = "nndsvd",
+    H_init: Optional[np.ndarray] = None,
+    max_iter: int = 2000,
+    l1_ratio: float = 0.0,
+    alpha_W: float = 0.0,
+    alpha_H: float = 0.0,
+    random_state: Optional[int] = 0,
+) -> NMFResult:
+    """Perform NMF on ``X``.
+
+    If ``init`` is ``"custom"`` and ``H_init`` provides fewer than ``n_components`` rows,
+    the remaining components are initialized randomly.
+    """
     X = np.asarray(X, dtype=float)
     if (X < 0).any():
         raise ValueError("X has negative entries. Clip or shift before NMF.")
     if init == "custom":
         if H_init is None:
             raise ValueError("H_init must be provided when init='custom'.")
-        if H_init.shape[0] != n_components or H_init.shape[1] != X.shape[1]:
-            raise ValueError(f"H_init shape {H_init.shape} incompatible with (k, n_features)=({n_components}, {X.shape[1]})")
+        if H_init.shape[1] != X.shape[1]:
+            raise ValueError(
+                f"H_init shape {H_init.shape} incompatible with n_features={X.shape[1]}"
+            )
+        if H_init.shape[0] != n_components:
+            rng = np.random.default_rng(random_state)
+            if H_init.shape[0] > n_components:
+                H_init = H_init[:n_components]
+            else:
+                extra = rng.random((n_components - H_init.shape[0], X.shape[1]))
+                H_init = np.vstack([H_init, extra])
         W_init = _nnls_W_given_H(X, H_init)
-        model = NMF(n_components=n_components, init="custom", max_iter=max_iter, l1_ratio=l1_ratio,
-                    alpha_W=alpha_W, alpha_H=alpha_H, random_state=random_state)
+        model = NMF(
+            n_components=n_components,
+            init="custom",
+            max_iter=max_iter,
+            l1_ratio=l1_ratio,
+            alpha_W=alpha_W,
+            alpha_H=alpha_H,
+            random_state=random_state,
+        )
         W = model.fit_transform(X, W=W_init, H=H_init.copy())
         H = model.components_
     else:
-        model = NMF(n_components=n_components, init=init, max_iter=max_iter, l1_ratio=l1_ratio,
-                    alpha_W=alpha_W, alpha_H=alpha_H, random_state=random_state)
+        model = NMF(
+            n_components=n_components,
+            init=init,
+            max_iter=max_iter,
+            l1_ratio=l1_ratio,
+            alpha_W=alpha_W,
+            alpha_H=alpha_H,
+            random_state=random_state,
+        )
         W = model.fit_transform(X)
         H = model.components_
     X_hat = W @ H
