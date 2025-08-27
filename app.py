@@ -148,13 +148,16 @@ if method == "NMF":
         if H_files:
             B, names = read_basis_vectors([(f.name, f.getvalue()) for f in H_files], x_target=x, parser=parser_cfg)
             if B.shape[0] != k:
-                st.sidebar.warning(f"Uploaded {B.shape[0]} components, but n_components is {k}. Using the first {min(B.shape[0], k)}.")
-                B = B[:k, :]
+                st.sidebar.warning(
+                    f"Uploaded {B.shape[0]} components, but n_components is {k}. "
+                    f"Using the first {min(B.shape[0], k)} and random for the rest."
+                )
+                B = B[:min(B.shape[0], k), :]
             # Preprocess H_init
             B = apply_smoothing(B, method=h_smooth_method, window=int(h_win), poly=int(h_poly), sigma=float(h_sigma))
             if h_clip0:
                 B = clip_nonneg(B)
-            H_init = B  # (k, n_features)
+            H_init = B  # (<=k, n_features)
 
     try:
         res = run_nmf(
