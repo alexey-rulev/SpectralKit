@@ -40,6 +40,6 @@ def line_fit_residual(x: np.ndarray, y_true: np.ndarray, y_fit: np.ndarray, titl
     return fig
 
 def heat_residuals(R: np.ndarray, title: str):
-    fig = go.Figure(data=go.Heatmap(z=R, colorbar=dict(title="residual"), colorscale="RdBu"))
+    fig = go.Figure(data=go.Heatmap(z=R, colorbar=dict(title="residual"), colorscale="Veridis"))
     fig.update_layout(title=title, xaxis_title="feature", yaxis_title="sample")
     return fig
