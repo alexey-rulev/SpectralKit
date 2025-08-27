@@ -10,11 +10,6 @@ class LSQResult:
     recon_error: float
 
 def run_lstsq(X: np.ndarray, B: np.ndarray) -> LSQResult:
-    """
-    Unconstrained linear least-squares fit of each sample x_i to the basis rows in B.
-    X: (n_samples, n_features), B: (k, n_features).
-    Solve A c_i ≈ x_i with A = B.T (n_features x k).
-    """
     X = np.asarray(X, dtype=float)
     B = np.asarray(B, dtype=float)
     if B.shape[1] != X.shape[1]:

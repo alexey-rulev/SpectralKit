@@ -22,6 +22,10 @@ def _nnls_W_given_H(X: np.ndarray, H: np.ndarray) -> np.ndarray:
         W[i] = w_i
     return W
 
+def _rand_pos(shape, random_state: Optional[int] = 0) -> np.ndarray:
+    rng = np.random.default_rng(random_state)
+    return (rng.random(shape).astype(float) + 1e-6)
+
 def run_nmf(
     X: np.ndarray,
     n_components: int,
@@ -34,66 +38,37 @@ def run_nmf(
     alpha_H: float = 0.0,
     random_state: Optional[int] = 0,
 ) -> NMFResult:
-    """Perform NMF on ``X``.
-
-    If ``init`` is ``"custom"`` and ``H_init`` provides fewer than ``n_components`` rows,
-    the remaining components are initialized randomly. When ``W_init`` is provided and
-    has fewer than ``n_components`` columns, the missing coefficients are filled with
-    ``0.5``. Extra columns in either initializer are truncated.
-    """
     X = np.asarray(X, dtype=float)
     if (X < 0).any():
         raise ValueError("X has negative entries. Clip or shift before NMF.")
+
     if init == "custom":
         if H_init is None:
-            raise ValueError("H_init must be provided when init='custom'.")
-        if H_init.shape[1] != X.shape[1]:
-            raise ValueError(
-                f"H_init shape {H_init.shape} incompatible with n_features={X.shape[1]}"
-            )
-        if H_init.shape[0] != n_components:
-            rng = np.random.default_rng(random_state)
-            if H_init.shape[0] > n_components:
-                H_init = H_init[:n_components]
-            else:
-                extra = rng.random((n_components - H_init.shape[0], X.shape[1]))
-                H_init = np.vstack([H_init, extra])
-        if W_init is not None:
-            if W_init.shape[0] != X.shape[0]:
-                raise ValueError(
-                    f"W_init has {W_init.shape[0]} rows but X has {X.shape[0]} samples"
-                )
-            if W_init.shape[1] != n_components:
-                if W_init.shape[1] > n_components:
-                    W_init = W_init[:, :n_components]
-                else:
-                    extra = np.full((X.shape[0], n_components - W_init.shape[1]), 0.5)
-                    W_init = np.hstack([W_init, extra])
+            H = _rand_pos((n_components, X.shape[1]), random_state=random_state)
         else:
-            W_init = _nnls_W_given_H(X, H_init)
-        model = NMF(
-            n_components=n_components,
-            init="custom",
-            max_iter=max_iter,
-            l1_ratio=l1_ratio,
-            alpha_W=alpha_W,
-            alpha_H=alpha_H,
-            random_state=random_state,
-        )
-        W = model.fit_transform(X, W=W_init, H=H_init.copy())
+            H = np.asarray(H_init, dtype=float)
+            if H.shape != (n_components, X.shape[1]):
+                raise ValueError(f"H_init shape {H.shape} incompatible with (k, n_features)=({n_components}, {X.shape[1]})")
+            H = np.clip(H, 0.0, None)
+
+        if W_init is None:
+            W0 = _nnls_W_given_H(X, H)
+        else:
+            W0 = np.asarray(W_init, dtype=float)
+            if W0.shape != (X.shape[0], n_components):
+                raise ValueError(f"W_init shape {W0.shape} incompatible with (n_samples, k)=({X.shape[0]}, {n_components})")
+            W0 = np.clip(W0, 0.0, None)
+
+        model = NMF(n_components=n_components, init="custom", max_iter=max_iter, l1_ratio=l1_ratio,
+                    alpha_W=alpha_W, alpha_H=alpha_H, random_state=random_state)
+        W = model.fit_transform(X, W=W0, H=H.copy())
         H = model.components_
     else:
-        model = NMF(
-            n_components=n_components,
-            init=init,
-            max_iter=max_iter,
-            l1_ratio=l1_ratio,
-            alpha_W=alpha_W,
-            alpha_H=alpha_H,
-            random_state=random_state,
-        )
+        model = NMF(n_components=n_components, init=init, max_iter=max_iter, l1_ratio=l1_ratio,
+                    alpha_W=alpha_W, alpha_H=alpha_H, random_state=random_state)
         W = model.fit_transform(X)
         H = model.components_
+
     X_hat = W @ H
     R = X - X_hat
     err = np.linalg.norm(R) / np.linalg.norm(X) if np.linalg.norm(X) > 0 else np.linalg.norm(R)

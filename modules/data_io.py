@@ -50,7 +50,7 @@ def _read_txt_like_auto(bytes_or_str: bytes, comment: str, skiprows: int) -> np.
     return arr
 
 
-def parse_xy(bytes_or_str: bytes, filename: str, cfg: ParserConfig) -> Tuple[Optional[np.ndarray], np.ndarray]:
+def parse_xy(bytes_or_str: bytes, filename: str, cfg: ParserConfig):
     if cfg.mode == "auto":
         arr = _read_txt_like_auto(bytes_or_str, comment=cfg.comment, skiprows=cfg.skiprows)
         if arr.shape[1] >= 2:

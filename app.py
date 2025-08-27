@@ -111,85 +111,102 @@ method = st.sidebar.radio("Method", ["NMF", "PCA", "NNLS", "LSQ"], horizontal=Tr
 
 if method == "NMF":
     st.sidebar.subheader("NMF parameters")
-    k = st.sidebar.number_input("n_components", 1, min(8, X_proc.shape[1]), min(3, X_proc.shape[1]), step=1)
-    init_choice = st.sidebar.selectbox("Initialization", ["nndsvd", "random", "custom (from basis files)"])
+    k = st.sidebar.number_input("n_components", 1, min(32, X_proc.shape[1]), min(3, X_proc.shape[1]), step=1)
+    init_choice = st.sidebar.selectbox("Initialization", ["nndsvd", "random", "custom"], index=0)
     max_iter = st.sidebar.number_input("max_iter", 100, 50000, 5000, step=100)
     l1_ratio = st.sidebar.slider("l1_ratio", 0.0, 1.0, 0.0, 0.05)
     alpha_W = st.sidebar.number_input("alpha_W", 0.0, 10.0, 0.0, step=0.1)
     alpha_H = st.sidebar.number_input("alpha_H", 0.0, 10.0, 0.0, step=0.1)
-    random_state = st.sidebar.number_input("random_state", 0, 10, 0, step=1)
+    random_state = st.sidebar.number_input("random_state", 0, 9999, 0, step=1)
+    norm_h_area = st.sidebar.checkbox("Normalize NMF components (H) by area", value=False, help="Scale each H row to unit area (trapz over x) and scale W columns accordingly.")
 
-    # NMF custom initialization
     H_init = None
     W_init = None
-    if "custom" in init_choice:
-        st.sidebar.markdown("**Upload initial basis components (H)**")
-        H_files = st.sidebar.file_uploader("H components (each file is one component)", type=["txt","csv","dat"], accept_multiple_files=True, key="nmf_h")
-        with st.sidebar.expander("Preprocess H init (optional)", expanded=False):
-            use_same = st.checkbox("Use same smoothing as data", value=True, key="nmf_h_use_same")
+    init_param = init_choice
+
+    if init_choice == "custom":
+        st.sidebar.markdown("### Custom initialization")
+        # Partial H init
+        st.sidebar.markdown("**H components (optional, partial allowed)**")
+        H_files = st.sidebar.file_uploader("Upload some H components (each file = one component; they will fill C1..Cm)", type=["txt","csv","dat"], accept_multiple_files=True, key="nmf_h_partial")
+
+        with st.sidebar.expander("Preprocess uploaded H (optional)", expanded=False):
+            use_same = st.checkbox("Use same smoothing as data", value=True, key="nmf_h_use_same2")
             if not use_same:
-                h_smooth_method = st.selectbox("H smoothing", ["none", "savgol", "moving_average", "gaussian"], index=0, key="nmf_h_smooth_method")
+                h_smooth_method = st.selectbox("H smoothing", ["none", "savgol", "moving_average", "gaussian"], index=0, key="nmf_h_smooth_method2")
                 if h_smooth_method == "savgol":
-                    h_win = st.number_input("H window length (odd)", 3, 301, 9, step=2, key="nmf_h_win")
-                    h_poly = st.number_input("H polyorder", 1, 9, 2, step=1, key="nmf_h_poly")
+                    h_win = st.number_input("H window length (odd)", 3, 301, 9, step=2, key="nmf_h_win2")
+                    h_poly = st.number_input("H polyorder", 1, 9, 2, step=1, key="nmf_h_poly2")
                     h_sigma = 0.0
                 elif h_smooth_method == "moving_average":
-                    h_win = st.number_input("H window (points)", 1, 501, 9, step=1, key="nmf_h_win_ma")
+                    h_win = st.number_input("H window (points)", 1, 501, 9, step=1, key="nmf_h_win_ma2")
                     h_poly = 0; h_sigma = 0.0
                 elif h_smooth_method == "gaussian":
                     h_win = 0; h_poly = 0
-                    h_sigma = st.number_input("H sigma (points)", 0.1, 100.0, 2.0, step=0.1, key="nmf_h_sigma")
+                    h_sigma = st.number_input("H sigma (points)", 0.1, 100.0, 2.0, step=0.1, key="nmf_h_sigma2")
                 else:
                     h_win = 0; h_poly = 0; h_sigma = 0.0
             else:
                 h_smooth_method = smooth_method
                 h_win, h_poly, h_sigma = int(win), int(poly), float(sigma)
-            h_clip0 = st.checkbox("Clip negatives in H after smoothing", value=True, key="nmf_h_clip0")
+            h_clip0 = st.checkbox("Clip negatives in H after smoothing", value=True, key="nmf_h_clip02")
 
-        if H_files:
-            B, names = read_basis_vectors([(f.name, f.getvalue()) for f in H_files], x_target=x, parser=parser_cfg)
-            if B.shape[0] != k:
-                st.sidebar.warning(
-                    f"Uploaded {B.shape[0]} components, but n_components is {k}. "
-                    f"Using the first {min(B.shape[0], k)} and random for the rest."
-                )
-                B = B[:min(B.shape[0], k), :]
-            # Preprocess H_init
+        # W init from CSV
+        st.sidebar.markdown("**W coefficients CSV (optional)**")
+        W_file = st.sidebar.file_uploader("Upload W CSV (rows=samples, cols=components)", type=["csv"], accept_multiple_files=False, key="nmf_w_csv")
+        w_fill_const = st.sidebar.number_input("Missing W init fill constant", 0.0, 1000.0, 0.1, step=0.1)
+
+        # Build H init: uploaded top rows + random rest
+        rng = np.random.default_rng(int(random_state))
+        H_init_full = (rng.random((int(k), X_proc.shape[1])).astype(float) + 1e-6)
+        if H_files and len(H_files) > 0:
+            B, _ = read_basis_vectors([(f.name, f.getvalue()) for f in H_files], x_target=x, parser=parser_cfg)
+            if B.shape[0] > int(k):
+                st.sidebar.warning(f"Uploaded {B.shape[0]} components but n_components is {k}. Using first {k}.")
+                B = B[:int(k), :]
             B = apply_smoothing(B, method=h_smooth_method, window=int(h_win), poly=int(h_poly), sigma=float(h_sigma))
             if h_clip0:
                 B = clip_nonneg(B)
-            H_init = B  # (<=k, n_features)
+            H_init_full[:B.shape[0], :] = B
+        H_init = H_init_full
 
-        st.sidebar.markdown("**Upload initial coefficients (W)** (CSV)")
-        W_file = st.sidebar.file_uploader("W coefficients", type=["csv"], accept_multiple_files=False, key="nmf_w")
+        # Build W init with padding/truncation
         if W_file is not None:
             try:
-                W_df = pd.read_csv(W_file)
-                W_arr = W_df.to_numpy()
-                if W_arr.shape[0] != X_proc.shape[0]:
-                    st.sidebar.warning(
-                        f"W file has {W_arr.shape[0]} rows but data has {X_proc.shape[0]} samples. Ignoring W init."
-                    )
-                else:
-                    if W_arr.shape[1] != k:
-                        st.sidebar.warning(
-                            f"W file has {W_arr.shape[1]} components, expected {k}. "
-                            "Missing columns will be filled with 0.5 or extra columns truncated."
-                        )
-                    W_init = W_arr
+                dfW = pd.read_csv(W_file)
+                W_arr = dfW.values.astype(float)
             except Exception as e:
-                st.sidebar.warning(f"Failed to parse W file: {e}")
+                st.error(f"Failed to read W CSV: {e}")
+                st.stop()
+            W_init_full = np.full((X_proc.shape[0], int(k)), float(w_fill_const), dtype=float)
+            r = min(W_init_full.shape[0], W_arr.shape[0])
+            c = min(W_init_full.shape[1], W_arr.shape[1])
+            W_init_full[:r, :c] = W_arr[:r, :c]
+            W_init = W_init_full
+
+        init_param = "custom"
 
     try:
         res = run_nmf(
-            X=X_proc, n_components=int(k),
-            init="custom" if "custom" in init_choice and H_init is not None else init_choice,
-            H_init=H_init, W_init=W_init, max_iter=int(max_iter), l1_ratio=float(l1_ratio),
+            X=X_proc, n_components=int(k), init=init_param,
+            H_init=H_init, W_init=W_init,
+            max_iter=int(max_iter), l1_ratio=float(l1_ratio),
             alpha_W=float(alpha_W), alpha_H=float(alpha_H), random_state=int(random_state),
         )
     except Exception as e:
         st.error(f"NMF failed: {e}")
         st.stop()
+
+    # Optional: normalize components by area
+    if norm_h_area:
+        areas = np.trapz(res.H, x, axis=1)
+        areas[areas == 0] = 1.0
+        Hn = res.H / areas[:, None]
+        Wn = res.W * areas[None, :]
+        X_hat_n = Wn @ Hn
+        Rn = X_proc - X_hat_n
+        errn = np.linalg.norm(Rn) / np.linalg.norm(X_proc) if np.linalg.norm(X_proc) > 0 else np.linalg.norm(Rn)
+        res.H, res.W, res.X_hat, res.residuals, res.recon_error = Hn, Wn, X_hat_n, Rn, errn
 
     st.subheader("Results — NMF")
     st.write(f"Relative reconstruction error: **{res.recon_error:.4g}**")
@@ -207,7 +224,7 @@ if method == "NMF":
 
 elif method == "PCA":
     st.sidebar.subheader("PCA parameters")
-    k = st.sidebar.number_input("n_components", 1, min(12, X_proc.shape[1]), min(3, X_proc.shape[1]), step=1)
+    k = st.sidebar.number_input("n_components", 1, min(32, X_proc.shape[1]), min(3, X_proc.shape[1]), step=1)
     whiten = st.sidebar.checkbox("whiten", value=False)
     random_state = st.sidebar.number_input("random_state", 0, 10, 0, step=1)
     try:
