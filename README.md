@@ -4,7 +4,7 @@ A program to decompose a series of spectra into basis components using PCA, NMF,
 
 - Select **data format**: auto, 1-column (y), 2-column (x y), or custom.
 - Select **interpolation grid**: use first file’s x, or span all files (min..max with first-file spacing).
-- **Smoothing**: none, Savitzky–Golay, moving average, Gaussian. Pipeline is **smooth → clip negatives → normalize**.
+- **Preprocessing**: optionally smooth corresponding values between adjacent uploaded samples after interpolation (in upload order), then smooth each spectrum along its x-axis using Savitzky–Golay, moving average, or Gaussian filters. Pipeline is **interpolate → between-sample smooth → within-spectrum smooth → clip negatives → normalize**.
 - Analyses: **NMF** (Non-negative Matrix Factorization, fits both components and coefficients, optional custom init for H and W from files — missing H rows are random and missing W columns filled with 0.5), **PCA** (Principal Components Analysis, fits components and coefficients, components are orthogonal), **NNLS** (Non-Negative Least Squares, fits only coefficients, uses datapoints as basis set), **LSQ** (unconstrained Least SQuares).
 - Plots: components, line-plotted coefficients/scores, reconstruction, residuals.
 

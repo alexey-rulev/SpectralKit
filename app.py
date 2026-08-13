@@ -1,20 +1,46 @@
 import os
+import warnings
 from typing import List, Tuple
 import numpy as np
 import pandas as pd
 import streamlit as st
+from sklearn.exceptions import ConvergenceWarning
 
 from modules.data_io import assemble_dataset, read_basis_vectors, ParserConfig, GridConfig
-from modules.utils import clip_nonneg, normalize_rows, apply_smoothing
+from modules.utils import apply_sample_smoothing, apply_smoothing, clip_nonneg, normalize_rows
 from modules.analysis_nmf import run_nmf
 from modules.analysis_pca import run_pca
 from modules.analysis_nnls import run_nnls
 from modules.analysis_lstsq import run_lstsq
+from modules.error_estimation import estimate_errors
 from modules import plotting as pltmod
 
 st.set_page_config(page_title="Spectral Analyzer", layout="wide")
 st.title("🔬 Spectral Analyzer")
 st.caption("NMF, PCA, NNLS, and LSQ analysis of multi-file 1D spectra/signals")
+
+
+def coefficients_to_csv(coefficients: np.ndarray, file_names: List[str]) -> bytes:
+    """Serialize per-sample coefficients with their corresponding uploaded filename."""
+    if coefficients.shape[0] != len(file_names):
+        raise ValueError("Coefficient rows must match the number of uploaded files.")
+    table = pd.DataFrame(
+        coefficients,
+        columns=[f"component_{index + 1}" for index in range(coefficients.shape[1])],
+    )
+    table.insert(0, "filename", [os.path.basename(name) for name in file_names])
+    return table.to_csv(index=False).encode("utf-8")
+
+
+def components_to_csv(components: np.ndarray, x_values: np.ndarray) -> bytes:
+    """Serialize components as one column per component, alongside the x grid."""
+    table = pd.DataFrame(
+        components.T,
+        columns=[f"component_{index + 1}" for index in range(components.shape[0])],
+    )
+    table.insert(0, "x", x_values)
+    return table.to_csv(index=False).encode("utf-8")
+
 
 with st.expander("About data formats", expanded=False):
     st.markdown("""
@@ -76,7 +102,31 @@ X = bundle.Y
 
 # Preprocessing
 st.sidebar.subheader("Preprocessing")
-smooth_method = st.sidebar.selectbox("Smoothing", ["none", "savgol", "moving_average", "gaussian"], index=0)
+sample_smooth_method = st.sidebar.selectbox(
+    "Smooth between uploaded samples",
+    ["none", "savgol", "moving_average", "gaussian"],
+    index=0,
+    help="Smooths corresponding grid values across adjacent uploaded files in upload order, after interpolation onto the common grid.",
+)
+if sample_smooth_method == "savgol":
+    sample_win = st.sidebar.number_input("Sample window length (odd)", 3, 301, 9, step=2)
+    sample_poly = st.sidebar.number_input("Sample polyorder", 1, 9, 2, step=1)
+    sample_sigma = 0.0
+elif sample_smooth_method == "moving_average":
+    sample_win = st.sidebar.number_input("Sample window (files)", 1, 501, 9, step=1)
+    sample_poly = 0; sample_sigma = 0.0
+elif sample_smooth_method == "gaussian":
+    sample_win = 0; sample_poly = 0
+    sample_sigma = st.sidebar.number_input("Sample sigma (files)", 0.1, 100.0, 2.0, step=0.1)
+else:
+    sample_win = 0; sample_poly = 0; sample_sigma = 0.0
+
+smooth_method = st.sidebar.selectbox(
+    "Smooth within each spectrum",
+    ["none", "savgol", "moving_average", "gaussian"],
+    index=0,
+    help="Smooths neighboring points along the interpolated x-axis within each uploaded sample.",
+)
 if smooth_method == "savgol":
     win = st.sidebar.number_input("Window length (odd)", 3, 301, 9, step=2)
     poly = st.sidebar.number_input("Polyorder", 1, 9, 2, step=1)
@@ -94,6 +144,13 @@ clip0 = st.sidebar.checkbox("Clip negatives to 0 (after smoothing)", value=True,
 norm_method = st.sidebar.selectbox("Normalize (row-wise)", ["none", "max", "l2", "area"], index=0)
 
 X_proc = X.copy()
+X_proc = apply_sample_smoothing(
+    X_proc,
+    method=sample_smooth_method,
+    window=int(sample_win),
+    poly=int(sample_poly),
+    sigma=float(sample_sigma),
+)
 X_proc = apply_smoothing(X_proc, method=smooth_method, window=int(win), poly=int(poly), sigma=float(sigma))
 if clip0:
     X_proc = clip_nonneg(X_proc)
@@ -108,6 +165,14 @@ with st.expander("Preview first 3 samples"):
 # Analysis selection
 st.sidebar.header("2) Choose analysis")
 method = st.sidebar.radio("Method", ["NMF", "PCA", "NNLS", "LSQ"], horizontal=True)
+bootstrap_samples = st.sidebar.number_input(
+    "Error-estimation bootstrap resamples", 2, 1000, 25, step=5,
+    help="Residual bootstrap resamples used to estimate one-standard-deviation error bars.",
+)
+bootstrap_max_iter = st.sidebar.number_input(
+    "Bootstrap NMF max iterations", 50, 5000, 500, step=50,
+    help="Maximum iterations for each NMF bootstrap refit. The original fit still uses its max_iter setting.",
+)
 
 if method == "NMF":
     st.sidebar.subheader("NMF parameters")
@@ -208,19 +273,42 @@ if method == "NMF":
         errn = np.linalg.norm(Rn) / np.linalg.norm(X_proc) if np.linalg.norm(X_proc) > 0 else np.linalg.norm(Rn)
         res.H, res.W, res.X_hat, res.residuals, res.recon_error = Hn, Wn, X_hat_n, Rn, errn
 
+    def fit_nmf_bootstrap(data: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", ConvergenceWarning)
+            bootstrap_result = run_nmf(
+                X=data, n_components=int(k), init="custom",
+                H_init=res.H.copy(), W_init=res.W.copy(), max_iter=int(bootstrap_max_iter),
+                l1_ratio=float(l1_ratio), alpha_W=float(alpha_W), alpha_H=float(alpha_H),
+                random_state=int(random_state),
+            )
+        if norm_h_area:
+            areas = np.trapezoid(bootstrap_result.H, x, axis=1)
+            areas[areas == 0] = 1.0
+            bootstrap_result.H = bootstrap_result.H / areas[:, None]
+            bootstrap_result.W = bootstrap_result.W * areas[None, :]
+        return bootstrap_result.W, bootstrap_result.H
+
+    errors = estimate_errors(
+        res.X_hat, res.residuals, res.W, res.H, fit_nmf_bootstrap,
+        int(bootstrap_samples), int(random_state), nonnegative=True,
+    )
+
     st.subheader("Results — NMF")
     st.write(f"Relative reconstruction error: **{res.recon_error:.4g}**")
     col1, col2 = st.columns([1,1])
     with col1:
-        st.plotly_chart(pltmod.line_components(x, res.H, "NMF components (rows of H)"), use_container_width=True)
+        st.plotly_chart(pltmod.line_components(x, res.H, "NMF components", errors.component_std), width="stretch")
     with col2:
-        st.plotly_chart(pltmod.line_coeffs(res.W, "NMF coefficients (W) vs sample", sample_names=[os.path.basename(n) for n in bundle.file_names]), use_container_width=True)
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - W @ H)"), use_container_width=True)
+        st.plotly_chart(pltmod.line_coeffs(res.W, "NMF coefficients (W) vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
+    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - W @ H)"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="nmf_idx")
-    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), use_container_width=True)
-    st.download_button("Download NMF components (H) CSV", data=pd.DataFrame(res.H, columns=x).to_csv(index=False).encode("utf-8"), file_name="nmf_components_H.csv")
-    st.download_button("Download NMF coefficients (W) CSV", data=pd.DataFrame(res.W).to_csv(index=False).encode("utf-8"), file_name="nmf_coeffs_W.csv")
+    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
+    st.download_button("Download NMF components (H) CSV", data=components_to_csv(res.H, x), file_name="nmf_components_H.csv")
+    st.download_button("Download NMF coefficients (W) CSV", data=coefficients_to_csv(res.W, bundle.file_names), file_name="nmf_coeffs_W.csv")
+    st.download_button("Download NMF component errors CSV", data=components_to_csv(errors.component_std, x), file_name="nmf_component_errors.csv")
+    st.download_button("Download NMF coefficient errors CSV", data=coefficients_to_csv(errors.weight_std, bundle.file_names), file_name="nmf_coeff_errors.csv")
 
 elif method == "PCA":
     st.sidebar.subheader("PCA parameters")
@@ -232,20 +320,29 @@ elif method == "PCA":
     except Exception as e:
         st.error(f"PCA failed: {e}")
         st.stop()
+    errors = estimate_errors(
+        res.X_hat, res.residuals, res.scores, res.components,
+        lambda data: (lambda bootstrap_result: (bootstrap_result.scores, bootstrap_result.components))(
+            run_pca(data, n_components=int(k), whiten=bool(whiten), random_state=int(random_state))
+        ),
+        int(bootstrap_samples), int(random_state),
+    )
     st.subheader("Results — PCA")
     st.write(f"Relative reconstruction error: **{res.recon_error:.4g}**")
     st.write("Explained variance ratio per component:", np.round(res.explained_variance_ratio, 4))
     col1, col2 = st.columns([1,1])
     with col1:
-        st.plotly_chart(pltmod.line_components(x, res.components, "PCA loadings (components)"), use_container_width=True)
+        st.plotly_chart(pltmod.line_components(x, res.components, "PCA loadings (components)", errors.component_std), width="stretch")
     with col2:
-        st.plotly_chart(pltmod.line_coeffs(res.scores, "PCA scores vs sample", sample_names=[os.path.basename(n) for n in bundle.file_names]), use_container_width=True)
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - scores @ components - mean)"), use_container_width=True)
+        st.plotly_chart(pltmod.line_coeffs(res.scores, "PCA scores vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
+    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - scores @ components - mean)"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="pca_idx")
-    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), use_container_width=True)
-    st.download_button("Download PCA components CSV", data=pd.DataFrame(res.components, columns=x).to_csv(index=False).encode("utf-8"), file_name="pca_components.csv")
-    st.download_button("Download PCA scores CSV", data=pd.DataFrame(res.scores).to_csv(index=False).encode("utf-8"), file_name="pca_scores.csv")
+    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
+    st.download_button("Download PCA components CSV", data=components_to_csv(res.components, x), file_name="pca_components.csv")
+    st.download_button("Download PCA scores CSV", data=coefficients_to_csv(res.scores, bundle.file_names), file_name="pca_scores.csv")
+    st.download_button("Download PCA component errors CSV", data=components_to_csv(errors.component_std, x), file_name="pca_component_errors.csv")
+    st.download_button("Download PCA score errors CSV", data=coefficients_to_csv(errors.weight_std, bundle.file_names), file_name="pca_score_errors.csv")
 
 elif method == "NNLS":
     st.sidebar.subheader("NNLS basis")
@@ -260,19 +357,28 @@ elif method == "NNLS":
     except Exception as e:
         st.error(f"NNLS failed: {e}")
         st.stop()
+    errors = estimate_errors(
+        res.X_hat, res.residuals, res.coeffs, B,
+        lambda data: (lambda bootstrap_result: (bootstrap_result.coeffs, B))(
+            run_nnls(data, B)
+        ),
+        int(bootstrap_samples), 0, nonnegative=True, components_fixed=True,
+    )
     st.subheader("Results — NNLS")
     st.write(f"Relative reconstruction error: **{res.recon_error:.4g}**")
     col1, col2 = st.columns([1,1])
     with col1:
-        st.plotly_chart(pltmod.line_components(x, B, "NNLS basis components", names), use_container_width=True)
+        st.plotly_chart(pltmod.line_components(x, B, "NNLS basis components", errors.component_std, names), width="stretch")
     with col2:
-        st.plotly_chart(pltmod.line_coeffs(res.coeffs, "NNLS coefficients vs sample", sample_names=[os.path.basename(n) for n in bundle.file_names]), use_container_width=True)
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), use_container_width=True)
+        st.plotly_chart(pltmod.line_coeffs(res.coeffs, "NNLS coefficients vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
+    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="nnls_idx")
-    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), use_container_width=True)
-    st.download_button("Download NNLS coefficients CSV", data=pd.DataFrame(res.coeffs).to_csv(index=False).encode("utf-8"), file_name="nnls_coeffs.csv")
-    st.download_button("Download NNLS basis (interpolated) CSV", data=pd.DataFrame(B, columns=x).to_csv(index=False).encode("utf-8"), file_name="nnls_basis_interpolated.csv")
+    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
+    st.download_button("Download NNLS coefficients CSV", data=coefficients_to_csv(res.coeffs, bundle.file_names), file_name="nnls_coeffs.csv")
+    st.download_button("Download NNLS coefficient errors CSV", data=coefficients_to_csv(errors.weight_std, bundle.file_names), file_name="nnls_coeff_errors.csv")
+    st.download_button("Download NNLS basis (interpolated) CSV", data=components_to_csv(B, x), file_name="nnls_basis_interpolated.csv")
+    st.download_button("Download NNLS basis errors CSV", data=components_to_csv(errors.component_std, x), file_name="nnls_basis_errors.csv")
 
 else:  # LSQ
     st.sidebar.subheader("LSQ basis (unconstrained least squares)")
@@ -287,16 +393,25 @@ else:  # LSQ
     except Exception as e:
         st.error(f"LSQ failed: {e}")
         st.stop()
+    errors = estimate_errors(
+        res.X_hat, res.residuals, res.coeffs, B,
+        lambda data: (lambda bootstrap_result: (bootstrap_result.coeffs, B))(
+            run_lstsq(data, B)
+        ),
+        int(bootstrap_samples), 0, components_fixed=True,
+    )
     st.subheader("Results — LSQ")
     st.write(f"Relative reconstruction error: **{res.recon_error:.4g}**")
     col1, col2 = st.columns([1,1])
     with col1:
-        st.plotly_chart(pltmod.line_components(x, B, "LSQ basis components", names), use_container_width=True)
+        st.plotly_chart(pltmod.line_components(x, B, "LSQ basis components", errors.component_std, names), width="stretch")
     with col2:
-        st.plotly_chart(pltmod.line_coeffs(res.coeffs, "LSQ coefficients vs sample", sample_names=[os.path.basename(n) for n in bundle.file_names]), use_container_width=True)
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), use_container_width=True)
+        st.plotly_chart(pltmod.line_coeffs(res.coeffs, "LSQ coefficients vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
+    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="lsq_idx")
-    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), use_container_width=True)
-    st.download_button("Download LSQ coefficients CSV", data=pd.DataFrame(res.coeffs).to_csv(index=False).encode("utf-8"), file_name="lsq_coeffs.csv")
-    st.download_button("Download LSQ basis (interpolated) CSV", data=pd.DataFrame(B, columns=x).to_csv(index=False).encode("utf-8"), file_name="lsq_basis_interpolated.csv")
+    st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
+    st.download_button("Download LSQ coefficients CSV", data=coefficients_to_csv(res.coeffs, bundle.file_names), file_name="lsq_coeffs.csv")
+    st.download_button("Download LSQ coefficient errors CSV", data=coefficients_to_csv(errors.weight_std, bundle.file_names), file_name="lsq_coeff_errors.csv")
+    st.download_button("Download LSQ basis (interpolated) CSV", data=components_to_csv(B, x), file_name="lsq_basis_interpolated.csv")
+    st.download_button("Download LSQ basis errors CSV", data=components_to_csv(errors.component_std, x), file_name="lsq_basis_errors.csv")

@@ -3,16 +3,30 @@ from typing import Optional, List
 import numpy as np
 import plotly.graph_objects as go
 
-def line_components(x: np.ndarray, M: np.ndarray, title: str, names: Optional[List[str]] = None) -> go.Figure:
+def line_components(
+    x: np.ndarray,
+    M: np.ndarray,
+    title: str,
+    errors: Optional[np.ndarray] = None,
+    names: Optional[List[str]] = None,
+) -> go.Figure:
     fig = go.Figure()
     k = M.shape[0]
     for i in range(k):
         name = names[i] if names and i < len(names) else f"C{i+1}"
-        fig.add_trace(go.Scatter(x=x, y=M[i], mode="lines", name=name))
+        fig.add_trace(go.Scatter(
+            x=x, y=M[i], mode="lines", name=name,
+            error_y=dict(type="data", array=errors[i], visible=True) if errors is not None else None,
+        ))
     fig.update_layout(title=title, xaxis_title="x", yaxis_title="amplitude", legend_title="Components")
     return fig
 
-def line_coeffs(C: np.ndarray, title: str, sample_names: Optional[List[str]] = None) -> go.Figure:
+def line_coeffs(
+    C: np.ndarray,
+    title: str,
+    errors: Optional[np.ndarray] = None,
+    sample_names: Optional[List[str]] = None,
+) -> go.Figure:
     n_samples, k = C.shape
     x = list(range(n_samples))
     hover_text = sample_names if sample_names is not None else None
@@ -21,6 +35,7 @@ def line_coeffs(C: np.ndarray, title: str, sample_names: Optional[List[str]] = N
         fig.add_trace(go.Scatter(
             x=x, y=C[:, j], mode="lines+markers", name=f"C{j+1}",
             text=hover_text,
+            error_y=dict(type="data", array=errors[:, j], visible=True) if errors is not None else None,
             hovertemplate=("sample=%{text}<br>idx=%{x}<br>value=%{y}<extra>%{fullData.name}</extra>") if hover_text else None,
         ))
     fig.update_layout(title=title, xaxis_title="sample index", yaxis_title="value", legend_title="Component")

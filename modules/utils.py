@@ -42,3 +42,10 @@ def apply_smoothing(X: np.ndarray, method: str = "none", window: int = 9, poly: 
             out[i] = gaussian_filter1d(X[i], sigma=s, mode="nearest")
         return out
     raise ValueError(f"Unknown smoothing method: {method}")
+
+
+def apply_sample_smoothing(X: np.ndarray, method: str = "none", window: int = 9, poly: int = 2, sigma: float = 2.0) -> np.ndarray:
+    """Smooth each grid value across adjacent uploaded samples (rows of ``X``)."""
+    if X.ndim != 2:
+        raise ValueError("Sample smoothing requires a 2D array.")
+    return apply_smoothing(X.T, method=method, window=window, poly=poly, sigma=sigma).T
