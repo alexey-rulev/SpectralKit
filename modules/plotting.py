@@ -58,3 +58,14 @@ def heat_residuals(R: np.ndarray, title: str):
     fig = go.Figure(data=go.Heatmap(z=R, colorbar=dict(title="residual"), colorscale="RdBu"))
     fig.update_layout(title=title, xaxis_title="feature", yaxis_title="sample")
     return fig
+
+
+def line_mean_squared_residuals(R: np.ndarray, title: str) -> go.Figure:
+    """Plot the mean squared residual across features for each sample."""
+    mean_squared_residuals = np.mean(np.square(R), axis=1)
+    fig = go.Figure(go.Scatter(
+        x=np.arange(R.shape[0]), y=mean_squared_residuals,
+        mode="lines+markers", name="MRS",
+    ))
+    fig.update_layout(title=title, xaxis_title="sample index", yaxis_title="mean squared residual")
+    return fig

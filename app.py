@@ -301,7 +301,11 @@ if method == "NMF":
         st.plotly_chart(pltmod.line_components(x, res.H, "NMF components", errors.component_std), width="stretch")
     with col2:
         st.plotly_chart(pltmod.line_coeffs(res.W, "NMF coefficients (W) vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - W @ H)"), width="stretch")
+    residual_col, mrs_col = st.columns([2, 1])
+    with residual_col:
+        st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - W @ H)"), width="stretch")
+    with mrs_col:
+        st.plotly_chart(pltmod.line_mean_squared_residuals(res.residuals, "MRS vs sample"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="nmf_idx")
     st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
@@ -335,7 +339,11 @@ elif method == "PCA":
         st.plotly_chart(pltmod.line_components(x, res.components, "PCA loadings (components)", errors.component_std), width="stretch")
     with col2:
         st.plotly_chart(pltmod.line_coeffs(res.scores, "PCA scores vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - scores @ components - mean)"), width="stretch")
+    residual_col, mrs_col = st.columns([2, 1])
+    with residual_col:
+        st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - scores @ components - mean)"), width="stretch")
+    with mrs_col:
+        st.plotly_chart(pltmod.line_mean_squared_residuals(res.residuals, "MRS vs sample"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="pca_idx")
     st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
@@ -371,7 +379,11 @@ elif method == "NNLS":
         st.plotly_chart(pltmod.line_components(x, B, "NNLS basis components", errors.component_std, names), width="stretch")
     with col2:
         st.plotly_chart(pltmod.line_coeffs(res.coeffs, "NNLS coefficients vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), width="stretch")
+    residual_col, mrs_col = st.columns([2, 1])
+    with residual_col:
+        st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), width="stretch")
+    with mrs_col:
+        st.plotly_chart(pltmod.line_mean_squared_residuals(res.residuals, "MRS vs sample"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="nnls_idx")
     st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
@@ -407,7 +419,11 @@ else:  # LSQ
         st.plotly_chart(pltmod.line_components(x, B, "LSQ basis components", errors.component_std, names), width="stretch")
     with col2:
         st.plotly_chart(pltmod.line_coeffs(res.coeffs, "LSQ coefficients vs sample", errors.weight_std, [os.path.basename(n) for n in bundle.file_names]), width="stretch")
-    st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), width="stretch")
+    residual_col, mrs_col = st.columns([2, 1])
+    with residual_col:
+        st.plotly_chart(pltmod.heat_residuals(res.residuals, "Residuals (X - C @ B)"), width="stretch")
+    with mrs_col:
+        st.plotly_chart(pltmod.line_mean_squared_residuals(res.residuals, "MRS vs sample"), width="stretch")
     st.markdown("**Per-sample fit viewer**")
     idx = st.slider("Sample index", 0, X_proc.shape[0]-1, 0, key="lsq_idx")
     st.plotly_chart(pltmod.line_fit_residual(x, X_proc[idx], res.X_hat[idx], f"Sample {idx} — data/fit/residual"), width="stretch")
