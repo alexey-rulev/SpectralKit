@@ -36,4 +36,4 @@ Use .dat files from example folder to try various options of fitting.
 
 
 # Additional files
-drift_analysis_clean.ipynb is a Jupyter notebook for correcting time-drift in NRVS spectra. Notebook is optimized for the SPring-8 NRVS spectra measured at BL35XU and the data available at https://doi.org/10.5281/zenodo.22704071
+drift_analysis_clean.ipynb is a Jupyter notebook for correcting time-drift in NRVS spectra. Notebook is optimized for the SPring-8 NRVS spectra measured at BL35XU. The data is available at https://doi.org/10.5281/zenodo.22704071
